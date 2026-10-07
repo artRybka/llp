@@ -250,6 +250,33 @@
     return { rows: rows, notes: notes, missing: missing };
   }
 
-  var api = { parsePdf: parsePdf, detectPeriod: detectPeriod, periodLabel: periodLabel, build: build, matchName: matchName, norm: norm, ratio: ratio, r2: r2 };
+  // ---------------------------------------------------------------- wklejka z rozliczenia → xls
+  function parseAmount(s) {
+    s = String(s || "").replace(/[\s\u00a0]/g, "");
+    if (!s) return NaN;
+    if (/,/.test(s)) s = s.replace(/\./g, "").replace(",", ".");
+    return /^-?\d+(\.\d+)?$/.test(s) ? parseFloat(s) : NaN;
+  }
+  /** Tekst rozdzielany tabulatorami: kol. 3 = Dział, 4 = Pracownik, 18 = E2 (1-based). */
+  function parsePaste(text, opts) {
+    opts = opts || {};
+    var cD = (opts.colDzial || 3) - 1, cP = (opts.colName || 4) - 1, cE = (opts.colE2 || 18) - 1;
+    var rows = [], zero = [], bad = [], dup = [], seen = {};
+    String(text || "").split(/\r?\n/).forEach(function (line, i) {
+      if (!line.trim()) return;
+      var f = line.split("\t");
+      if (f.length < 4) return;                      // nagłówki typu "Kredyty"
+      var name = (f[cP] || "").trim().replace(/\s+/g, " "), dz = (f[cD] || "").trim(), e2 = parseAmount(f[cE]);
+      if (!name || isNaN(e2)) { bad.push({ line: i + 1, text: line.slice(0, 60) }); return; }
+      var k = norm(name);
+      if (seen[k]) { dup.push(name); return; }
+      seen[k] = 1;
+      var r = { dzial: dz, name: name, e2: r2(e2) };
+      if (Math.abs(e2) < 0.005 && opts.skipZero !== false) zero.push(r); else rows.push(r);
+    });
+    return { rows: rows, zero: zero, bad: bad, dup: dup };
+  }
+
+  var api = { parsePdf: parsePdf, parsePaste: parsePaste, detectPeriod: detectPeriod, periodLabel: periodLabel, build: build, matchName: matchName, norm: norm, ratio: ratio, r2: r2 };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.ListyPlac = api;
 })(this);

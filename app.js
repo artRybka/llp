@@ -1,7 +1,7 @@
 /* Listy płac → Excel – logika panelu dodatku */
 (function () {
   "use strict";
-  var VERSION = "1.0";
+  var VERSION = "1.1";
   var TABLE = "zlistplac";
   var NAME_TABLES = ["XLS", "Pracownicy_Etat"];
   var SETTING_PERIOD = "llp.okres";
@@ -43,7 +43,8 @@
       var tables = ctx.workbook.tables; tables.load("items/name");
       await ctx.sync();
       var have = tables.items.map(function (t) { return t.name; });
-      var res = { hasTarget: have.indexOf(TABLE) >= 0, names: [], etat: {}, rowsInTable: 0 };
+      var res = { hasTarget: have.indexOf(TABLE) >= 0, hasXls: have.indexOf("XLS") >= 0, names: [], etat: {}, peNames: [],
+        rowsInTable: 0, xlsFilled: 0, xlsEmpty: 0 };
       var loads = [];
       NAME_TABLES.forEach(function (tn) {
         if (have.indexOf(tn) < 0) return;
@@ -61,6 +62,15 @@
           if (!n) return;
           if (res.names.indexOf(n) < 0) res.names.push(n);
           if (L.tn === "XLS" && ie >= 0) res.etat[n] = r[ie];
+          if (L.tn === "Pracownicy_Etat") res.peNames.push(n);
+        });
+      });
+      loads.forEach(function (L) {
+        if (L.tn !== "XLS") return;
+        var hdr = L.h.values[0], ip = hdr.indexOf("Pracownik"), id = hdr.indexOf("Dział"), ix = hdr.indexOf("E2");
+        L.b.values.forEach(function (r) {
+          if (String(r[ip] || "").trim()) res.xlsFilled++;
+          else if (!String(r[id] || "").trim() && (r[ix] === "" || r[ix] == null)) res.xlsEmpty++;
         });
       });
       if (tb) res.rowsInTable = tb.values.filter(function (r) { return String(r[0] || "").trim(); }).length;
@@ -187,7 +197,7 @@
       });
       var out = order.sort().map(function (k) { return map[k]; });
       var prev = await writeBody(out);
-      state.undo = { rows: prev, period: stored };
+      state.undo = { kind: "pdf", rows: prev, period: stored };
       $("btnUndo").disabled = false;
       if (sp.period) setSetting(SETTING_PERIOD, sp.period);
       state.tableRows = out;
@@ -201,6 +211,7 @@
   async function undo() {
     if (!state.undo) return;
     var u = state.undo; state.undo = null;
+    if (u.kind === "xls") return undoXls(u);
     await writeBody(u.rows);
     if (u.period) setSetting(SETTING_PERIOD, u.period);
     state.files = [];
@@ -220,7 +231,7 @@
     clearTimeout(clearArmed); clearArmed = null; $("btnClear").textContent = "Wyczyść tabelę";
     if (!state.inExcel) return;
     var prev = await writeBody([]);
-    state.undo = { rows: prev, period: getSetting(SETTING_PERIOD) };
+    state.undo = { kind: "pdf", rows: prev, period: getSetting(SETTING_PERIOD) };
     $("btnUndo").disabled = false;
     state.files = []; state.built = null; render();
     setStatus("Tabela <b>" + TABLE + "</b> wyczyszczona.");
@@ -306,15 +317,186 @@
     if (!cnt) box.innerHTML = '<div class="ok-line">Wszystko dopasowane, nic do sprawdzenia ✓</div>';
   }
 
+  // ------------------------------------------------------------------ zakładka: zestawienie → xls
+  var XLS = "XLS";
+  function xStatus(wb) {
+    if (!wb.hasXls) { $("xstatus").innerHTML = "<b>W tym skoroszycie nie ma tabeli „XLS”.</b>"; $("xstatus").className = "status bad"; return; }
+    $("xstatus").className = "status";
+    $("xstatus").innerHTML = "Tabela <b>XLS</b>: " + wb.xlsFilled + " osób · " + wb.xlsEmpty + " pustych wierszy";
+  }
+
+  function fillXls(rows) {
+    return excelRun(async function (ctx) {
+      var t = ctx.workbook.tables.getItem(XLS), h = t.getHeaderRowRange(), b = t.getDataBodyRange();
+      h.load("values"); b.load("values,formulas,rowCount");
+      await ctx.sync();
+      var hdr = h.values[0], iD = hdr.indexOf("Dział"), iP = hdr.indexOf("Pracownik"), iE = hdr.indexOf("E2");
+      if (iD < 0 || iP < 0 || iE < 0) throw new Error("w tabeli XLS brakuje kolumny Dział, Pracownik albo E2");
+      var vals = b.values, frm = b.formulas, n = b.rowCount;
+      var cols = [iD, iP, iE];
+      var snap = frm.map(function (r) { return cols.map(function (c) { return r[c]; }); });
+      var next = snap.map(function (r) { return r.slice(); });
+      var byName = {}, empty = [];
+      vals.forEach(function (r, i) {
+        var nm = String(r[iP] || "").trim();
+        if (nm) byName[LP.norm(nm)] = i;
+        else if (!String(r[iD] || "").trim() && (r[iE] === "" || r[iE] == null)) empty.push(i);
+      });
+      var out = { filled: [], appended: [], already: [], updated: [], conflicts: [] };
+      var toAppend = [];
+      rows.forEach(function (r) {
+        var k = LP.norm(r.name);
+        if (k in byName) {
+          var i = byName[k], cur = vals[i][iE];
+          if (cur === "" || cur == null) {
+            next[i][2] = r.e2; if (!String(vals[i][iD] || "").trim()) next[i][0] = r.dzial;
+            out.updated.push(r);
+          } else if (typeof cur === "number" && Math.abs(cur - r.e2) > 0.005) {
+            out.conflicts.push({ name: vals[i][iP], cur: cur, e2: r.e2 });
+          } else out.already.push(r);
+        } else if (empty.length) {
+          var j = empty.shift(); next[j] = [r.dzial, r.name, r.e2]; byName[k] = j; out.filled.push(r);
+        } else { toAppend.push(r); out.appended.push(r); }
+      });
+      if (out.filled.length || out.updated.length) {
+        cols.forEach(function (c, j) { b.getColumn(c).values = next.map(function (r) { return [r[j]]; }); });
+      }
+      if (toAppend.length) {
+        var tpl = frm[0];
+        t.rows.add(null, toAppend.map(function (r) {
+          return tpl.map(function (f, c) {
+            if (c === iD) return r.dzial; if (c === iP) return r.name; if (c === iE) return r.e2;
+            return typeof f === "string" && f.charAt(0) === "=" ? f : "";
+          });
+        }));
+      }
+      await ctx.sync();
+      out.snap = snap; out.n = n; out.cols = cols;
+      return out;
+    });
+  }
+
+  async function undoXls(u) {
+    await excelRun(async function (ctx) {
+      var t = ctx.workbook.tables.getItem(XLS), b = t.getDataBodyRange();
+      for (var i = u.n + u.appended - 1; i >= u.n; i--) t.rows.getItemAt(i).delete();
+      await ctx.sync();
+      u.cols.forEach(function (c, j) { b.getColumn(c).values = u.snap.map(function (r) { return [r[j]]; }); });
+      await ctx.sync();
+    });
+    $("btnUndo").disabled = true;
+    $("xResSec").classList.add("hidden"); $("xIssuesSec").classList.add("hidden");
+    banner("info", "Przywrócono poprzednią zawartość zakładki xls.");
+    await refreshWorkbook();
+  }
+
+  async function refreshWorkbook() {
+    var wb = await readWorkbook();
+    state.names = wb.names; state.etat = wb.etat; state.peNames = wb.peNames;
+    xStatus(wb);
+    setStatus("Tabela <b>" + TABLE + "</b>: " + wb.rowsInTable + " osób · " + wb.names.length + " pracowników w arkuszach");
+    return wb;
+  }
+
+  var pasteBusy = false;
+  async function handlePaste() {
+    var text = $("paste").value;
+    if (!text.trim() || pasteBusy) return;
+    var p = LP.parsePaste(text, { skipZero: $("skipZero").checked });
+    banner(null);
+    if (!p.rows.length) {
+      banner("warn", "Nie rozpoznałem żadnych wierszy. Oczekuję danych rozdzielonych tabulatorami (Dział w 3., pracownik w 4., kwota w 18. kolumnie).");
+      return;
+    }
+    if (!state.inExcel) { renderXls(p, null); return; }
+    pasteBusy = true; $("pasteBox").classList.add("busy");
+    try {
+      var res = await fillXls(p.rows);
+      state.undo = { kind: "xls", snap: res.snap, n: res.n, cols: res.cols, appended: res.appended.length };
+      $("btnUndo").disabled = false;
+      await refreshWorkbook();
+      renderXls(p, res);
+      $("paste").value = "";
+    } catch (e) {
+      console.error(e);
+      banner("err", "Nie udało się wpisać danych: " + esc(e.message || e));
+    } finally { pasteBusy = false; $("pasteBox").classList.remove("busy"); }
+  }
+
+  function renderXls(p, res) {
+    var box = $("xIssues"); box.innerHTML = "";
+    function add(cls, icon, html, name) {
+      var d = document.createElement("div"); d.className = "issue " + cls;
+      d.innerHTML = '<span class="ic">' + icon + "</span><span>" + html + "</span>";
+      var a = d.querySelector("a"); if (a && name) a.onclick = function () { selectName(name, XLS); };
+      box.appendChild(d);
+    }
+    function group(cls, icon, title, names) {
+      var det = document.createElement("details"); det.className = "issue " + cls + " group";
+      det.innerHTML = '<summary><span class="ic">' + icon + "</span><span>" + title + "</span></summary>";
+      var ul = document.createElement("div"); ul.className = "misslist";
+      names.forEach(function (m) { var a = document.createElement("a"); a.textContent = m; a.onclick = function () { selectName(m, XLS); }; ul.appendChild(a); });
+      det.appendChild(ul); box.appendChild(det);
+    }
+    var written = res ? res.filled.concat(res.appended, res.updated) : p.rows;
+    $("xResSec").classList.remove("hidden");
+    $("xNew").textContent = res ? String(res.filled.length + res.appended.length) : String(p.rows.length);
+    $("xSum").textContent = fmt(written.reduce(function (a, r) { return a + r.e2; }, 0));
+    $("xInfo").textContent = p.rows.length + " rozpoznanych" + (p.zero.length ? " + " + p.zero.length + " z zerem" : "");
+
+    if (res) {
+      res.conflicts.forEach(function (c) {
+        add("warn", "?", "<a>" + esc(c.name) + "</a>: w tabeli " + fmt(c.cur) + ", we wklejce " + fmt(c.e2) + " – nie nadpisano", c.name);
+      });
+      var pe = {}; (state.peNames || []).forEach(function (n) { pe[LP.norm(n)] = 1; });
+      written.forEach(function (r) {
+        if ((state.peNames || []).length && !pe[LP.norm(r.name)])
+          add("err", "!", "<a>" + esc(r.name) + "</a> – brak w „Przypisanie do firm”, formuły w tym wierszu pokażą #N/A", r.name);
+      });
+      if (res.updated.length) group("warn", "+", "Uzupełniono E2 u " + res.updated.length + " os. już obecnych w tabeli", res.updated.map(function (r) { return r.name; }));
+      if (res.appended.length) add("warn", "+", "Zabrakło pustych wierszy – dodano " + res.appended.length + " do tabeli XLS (z formułami)");
+      if (res.already.length) group("miss", "=", res.already.length + " os. już było w tabeli z tą samą kwotą – bez zmian", res.already.map(function (r) { return r.name; }));
+    }
+    if (p.zero.length) group("miss", "0", "Pominięto " + p.zero.length + " os. z kwotą 0,00", p.zero.map(function (r) { return r.name; }));
+    if (p.dup.length) add("warn", "?", "Powtórzone w wklejce (wzięto pierwsze wystąpienie): " + esc(p.dup.join(", ")));
+    if (p.bad.length) add("warn", "?", "Nie rozpoznano " + p.bad.length + " wierszy, np. wiersz " + p.bad[0].line + ": „" + esc(p.bad[0].text) + "”");
+
+    var cnt = box.children.length;
+    $("xIssuesSec").classList.remove("hidden");
+    $("xIssuesCount").textContent = cnt || "";
+    if (!cnt) box.innerHTML = '<div class="ok-line">Wszystko wpisane, nic do sprawdzenia ✓</div>';
+    if (!res) banner("info", "Tryb podglądu – poza Excelem nic nie zostało zapisane.");
+  }
+
+  $("paste").addEventListener("paste", function () { setTimeout(handlePaste, 0); });
+  $("paste").addEventListener("drop", function () { setTimeout(handlePaste, 0); });
+  $("btnShowXls").onclick = function () {
+    if (!state.inExcel) return;
+    excelRun(async function (ctx) { var t = ctx.workbook.tables.getItem(XLS); t.worksheet.activate(); t.getRange().select(); await ctx.sync(); });
+  };
+
+  // ------------------------------------------------------------------ zakładki
+  function showTab(which) {
+    var pdf = which !== "xls";
+    $("viewPdf").classList.toggle("hidden", !pdf); $("viewXls").classList.toggle("hidden", pdf);
+    $("tabPdf").setAttribute("aria-selected", String(pdf)); $("tabXls").setAttribute("aria-selected", String(!pdf));
+    try { localStorage.setItem("llp.tab", pdf ? "pdf" : "xls"); } catch (e) {}
+    if (!pdf) setTimeout(function () { $("paste").focus(); }, 0);
+  }
+  $("tabPdf").onclick = function () { showTab("pdf"); };
+  $("tabXls").onclick = function () { showTab("xls"); };
+  try { if (localStorage.getItem("llp.tab") === "xls") showTab("xls"); } catch (e) {}
+
   // ------------------------------------------------------------------ UI
   var drop = $("drop"), input = $("file");
   input.addEventListener("change", function () { handleFiles(input.files); input.value = ""; });
   drop.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } });
   var depth = 0;
-  document.addEventListener("dragenter", function (e) { e.preventDefault(); depth++; drop.classList.add("over"); });
+  document.addEventListener("dragenter", function (e) { if (e.target && e.target.id === "paste") return; e.preventDefault(); depth++; drop.classList.add("over"); });
   document.addEventListener("dragleave", function () { if (--depth <= 0) { depth = 0; drop.classList.remove("over"); } });
-  document.addEventListener("dragover", function (e) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = "copy"; });
+  document.addEventListener("dragover", function (e) { if (e.target && e.target.id === "paste") return; e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = "copy"; });
   document.addEventListener("drop", function (e) {
+    if (e.target && e.target.id === "paste") { depth = 0; drop.classList.remove("over"); return; }
     e.preventDefault(); depth = 0; drop.classList.remove("over");
     if (e.dataTransfer && e.dataTransfer.files) handleFiles(e.dataTransfer.files);
   });
@@ -331,7 +513,8 @@
     state.inExcel = !!(info && info.host === Office.HostType.Excel);
     if (!state.inExcel) {
       setStatus("Tryb podglądu (poza Excelem) — dane nie będą zapisywane.");
-      ["btnUndo", "btnShow", "btnClear"].forEach(function (id) { $(id).disabled = true; });
+      $("xstatus").textContent = "Tryb podglądu (poza Excelem) — dane nie będą zapisywane.";
+      ["btnUndo", "btnShow", "btnClear", "btnShowXls"].forEach(function (id) { $(id).disabled = true; });
       return;
     }
     if (!Office.context.requirements.isSetSupported("ExcelApi", "1.4")) {
@@ -339,7 +522,8 @@
     }
     try {
       var wb = await readWorkbook();
-      state.names = wb.names; state.etat = wb.etat;
+      state.names = wb.names; state.etat = wb.etat; state.peNames = wb.peNames;
+      xStatus(wb);
       if (!wb.hasTarget) {
         setStatus("<b>W tym skoroszycie nie ma tabeli „" + TABLE + "”.</b> Otwórz zestawienie wypłat.", true);
         drop.classList.add("busy");
