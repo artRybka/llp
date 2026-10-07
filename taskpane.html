@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Listy płac</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<script src="vendor/pdf.min.js"></script>
+<script src="core.js"></script>
+<style>
+:root{
+  --bg:#f6f5f2; --card:#ffffff; --ink:#1d1c1a; --muted:#6f6b64; --line:#e4e1da;
+  --accent:#107c41; --accent-soft:#e7f3ec; --warn:#a35a00; --warn-soft:#fdf1e1;
+  --err:#b42318; --err-soft:#fdeceb; --drop:#fbfaf8; --focus:#0f6cbd;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#1f1f1e; --card:#2a2a28; --ink:#efede8; --muted:#a6a29a; --line:#3a3936;
+    --accent:#4cc283; --accent-soft:#1d3327; --warn:#f0a646; --warn-soft:#3a2c17;
+    --err:#ff7b6e; --err-soft:#3b1f1c; --drop:#252524; }
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);
+  font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;}
+body{padding:14px 14px 28px}
+h1{font-size:15px;font-weight:650;margin:0;letter-spacing:-.01em}
+.top{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:2px}
+.ver{color:var(--muted);font-size:11px}
+.status{color:var(--muted);font-size:12px;margin:0 0 12px;min-height:17px}
+.status b{color:var(--ink);font-weight:600}
+.status.bad b{color:var(--err)}
+
+.drop{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:6px;min-height:150px;padding:18px;border:1.5px dashed #c9c4ba;border-radius:12px;background:var(--drop);
+  text-align:center;cursor:pointer;transition:border-color .15s, background .15s, transform .15s}
+.drop:hover{border-color:var(--accent)}
+.drop.over{border-color:var(--accent);background:var(--accent-soft);transform:scale(1.01)}
+.drop.busy{pointer-events:none;opacity:.75}
+.drop svg{width:34px;height:34px;color:var(--accent)}
+.drop .big{font-weight:600;font-size:14px}
+.drop .small{color:var(--muted);font-size:12px}
+.drop input{display:none}
+.spinner{width:18px;height:18px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;
+  animation:spin .8s linear infinite;display:none}
+.drop.busy .spinner{display:block}.drop.busy svg{display:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.banner{margin:12px 0 0;padding:9px 11px;border-radius:9px;font-size:12px;display:none}
+.banner.show{display:block}
+.banner.info{background:var(--accent-soft)}
+.banner.warn{background:var(--warn-soft);color:var(--warn)}
+.banner.err{background:var(--err-soft);color:var(--err)}
+.banner button{margin-left:6px}
+
+section{margin-top:16px}
+.label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 6px;
+  display:flex;justify-content:space-between;align-items:center}
+.files{display:flex;flex-direction:column;gap:6px}
+.file{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 10px;display:grid;
+  grid-template-columns:auto 1fr auto;gap:2px 9px;align-items:center}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--accent);grid-row:span 2}
+.file.bad .dot{background:var(--err)} .file.nototal .dot{background:var(--warn)}
+.fname{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fmeta{color:var(--muted);font-size:11.5px;grid-column:2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.x{grid-row:1/span 2;grid-column:3;border:0;background:none;color:var(--muted);font-size:16px;cursor:pointer;
+  padding:2px 4px;border-radius:6px}
+.x:hover{background:var(--line);color:var(--ink)}
+.chk{grid-column:2;font-size:11.5px;color:var(--err)}
+
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.stat .k{color:var(--muted);font-size:11px}
+.stat .v{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:1px;white-space:nowrap}
+.stat.main{grid-column:1/-1}.stat.main .v{font-size:20px;letter-spacing:-.01em}
+
+.issues{display:flex;flex-direction:column;gap:4px}
+.issue{display:flex;gap:7px;align-items:flex-start;font-size:12px;padding:6px 8px;border-radius:8px;background:var(--card);
+  border:1px solid var(--line)}
+.issue .ic{flex:none;width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:700;
+  color:#fff;margin-top:1px}
+.issue.warn .ic{background:var(--warn)} .issue.err .ic{background:var(--err)} .issue.miss .ic{background:#8a857c}
+.issue a{color:inherit;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:2px;cursor:pointer}
+details.issue{display:block;padding:0}
+details.issue summary{display:flex;gap:7px;align-items:flex-start;padding:6px 8px;cursor:pointer;list-style:none}
+details.issue summary::-webkit-details-marker{display:none}
+details.issue summary::after{content:"▸";margin-left:auto;color:var(--muted);transition:transform .15s}
+details.issue[open] summary::after{transform:rotate(90deg)}
+.misslist{display:flex;flex-wrap:wrap;gap:4px 10px;padding:0 8px 8px 31px}
+.misslist a{cursor:pointer;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:2px}
+.ok-line{font-size:12px;color:var(--accent);padding:6px 2px}
+
+.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:16px}
+button.btn{font:inherit;font-size:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);
+  border-radius:8px;padding:6px 10px;cursor:pointer}
+button.btn:hover{border-color:#bdb7ac}
+button.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.btn.danger{color:var(--err)}
+button.btn:disabled{opacity:.45;cursor:default}
+button:focus-visible,.drop:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.hidden{display:none!important}
+.foot{margin-top:18px;color:var(--muted);font-size:11px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="top"><h1>Listy płac → Excel</h1><span class="ver" id="ver"></span></div>
+<p class="status" id="status">Łączę z Excelem…</p>
+
+<label class="drop" id="drop" tabindex="0">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 11v6"/><path d="m9 14 3 3 3-3"/>
+  </svg>
+  <div class="spinner"></div>
+  <div class="big" id="dropBig">Upuść listy płac (PDF)</div>
+  <div class="small" id="dropSmall">albo kliknij, żeby wybrać — można kilka naraz</div>
+  <input type="file" id="file" accept="application/pdf,.pdf" multiple>
+</label>
+
+<div class="banner" id="banner"></div>
+
+<section id="filesSec" class="hidden">
+  <p class="label"><span>Wczytane listy</span><span id="period"></span></p>
+  <div class="files" id="files"></div>
+</section>
+
+<section id="statsSec" class="hidden">
+  <p class="label"><span>Wpisane do tabeli</span><span id="rowsInfo"></span></p>
+  <div class="stats">
+    <div class="stat main"><div class="k">Pensje do przelania</div><div class="v" id="sDw">–</div></div>
+    <div class="stat"><div class="k">L4</div><div class="v" id="sL4">–</div></div>
+    <div class="stat"><div class="k">PPK prac.</div><div class="v" id="sPpkP">–</div></div>
+    <div class="stat"><div class="k">PPK firma</div><div class="v" id="sPpkF">–</div></div>
+  </div>
+</section>
+
+<section id="issuesSec" class="hidden">
+  <p class="label"><span>Do sprawdzenia</span><span id="issuesCount"></span></p>
+  <div class="issues" id="issues"></div>
+</section>
+
+<div class="actions">
+  <button class="btn" id="btnUndo" disabled>Cofnij ostatni import</button>
+  <button class="btn" id="btnShow">Pokaż tabelę</button>
+  <button class="btn danger" id="btnClear">Wyczyść tabelę</button>
+</div>
+
+<p class="foot">Pliki PDF są czytane lokalnie na tym komputerze — nic nie jest wysyłane.
+Dane trafiają do tabeli <b>zlistplac</b>; osoby z innych list zostają, nowy okres czyści tabelę automatycznie.</p>
+
+<script src="app.js"></script>
+</body>
+</html>

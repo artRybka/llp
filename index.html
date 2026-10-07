@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Listy płac → Excel</title>
+<link rel="icon" href="assets/icon-32.png">
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--ink:#1d1c1a;--muted:#6f6b64;--line:#e4e1da;--accent:#107c41;--code:#efece6}
+@media (prefers-color-scheme: dark){:root{--bg:#1f1f1e;--card:#2a2a28;--ink:#efede8;--muted:#a6a29a;--line:#3a3936;--accent:#4cc283;--code:#333230}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:680px;margin:0 auto;padding:48px 16px 64px}
+header{display:flex;gap:14px;align-items:center;margin-bottom:8px}
+header img{width:48px;height:48px}
+h1{font-size:24px;margin:0;letter-spacing:-.015em}
+.lead{color:var(--muted);margin:4px 0 32px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:32px 0 10px}
+ol{padding-left:20px;margin:0}
+li{margin:0 0 12px}
+pre{background:var(--code);border-radius:10px;padding:12px 14px;overflow-x:auto;font:12.5px/1.5 ui-monospace,"SF Mono",Menlo,monospace;margin:8px 0 0;white-space:pre-wrap;word-break:break-all}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+a{color:var(--accent)}
+.btn{display:inline-block;margin-top:6px;padding:8px 14px;border-radius:9px;background:var(--accent);color:#fff;text-decoration:none;font-weight:600;font-size:14px}
+small{color:var(--muted)}
+</style>
+</head>
+<body><main>
+<header><img src="assets/icon-128.png" alt=""><h1>Listy płac → Excel</h1></header>
+<p class="lead">Dodatek do Excela: upuszczasz listy płac w PDF (Comarch Optima, Gratyfikant), a tabela <b>zlistplac</b> w zestawieniu wypłat wypełnia się sama. PDF‑y są czytane lokalnie, nic nie jest wysyłane.</p>
+
+<h2>Instalacja na Macu (raz)</h2>
+<div class="card"><ol>
+<li>Otwórz <b>Terminal</b> i wklej:
+<pre>mkdir -p ~/Library/Containers/com.microsoft.Excel/Data/Documents/wef && curl -fsSL https://artrybka.github.io/llp/manifest.xml -o ~/Library/Containers/com.microsoft.Excel/Data/Documents/wef/llp.xml && echo OK</pre></li>
+<li>Zamknij Excela całkowicie (⌘Q) i uruchom ponownie.</li>
+<li>Otwórz zestawienie, potem <b>Narzędzia główne → Dodatki</b> (albo <b>Wstawianie → Moje dodatki</b>) i wybierz <b>Listy płac</b> z sekcji dodatków deweloperskich.</li>
+<li>Od tej chwili na karcie <b>Narzędzia główne</b> jest przycisk <b>Listy płac</b> w grupie <b>Light</b>.</li>
+</ol></div>
+
+<h2>Windows / Excel w przeglądarce</h2>
+<div class="card">
+<p style="margin-top:0"><b>Wstawianie → Dodatki → Moje dodatki → Przekaż mój dodatek</b> i wskaż plik manifestu:</p>
+<a class="btn" href="manifest.xml" download="llp.xml">Pobierz manifest</a>
+<p><small>Dla całej firmy: administrator Microsoft 365 może wdrożyć ten manifest w centrum administracyjnym (Zintegrowane aplikacje) — wtedy przycisk pojawi się wszystkim automatycznie.</small></p>
+</div>
+
+<h2>Jak używać</h2>
+<div class="card"><ol>
+<li>Otwórz zestawienie wypłat i kliknij <b>Listy płac</b>.</li>
+<li>Upuść PDF‑y na panel (wszystkie naraz albo po kolei). Gdy przeciąganie nie działa, kliknij pole i wybierz pliki.</li>
+<li>Sprawdź zielone kropki (sumy zgodne z podsumowaniem listy) i sekcję „Do sprawdzenia”. Kliknięcie nazwiska zaznacza jego wiersz.</li>
+</ol>
+<p><small>Lista z nowego okresu automatycznie czyści dane z poprzedniego miesiąca. Każdą operację można cofnąć przyciskiem w panelu.</small></p>
+</div>
+</main></body></html>
